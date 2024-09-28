@@ -1,21 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import {
-  concatMap,
-  defer,
-  delay,
-  filter,
-  from,
-  map,
-  Observable,
-  of,
-  repeat,
-  scan,
-  skipUntil,
-  takeWhile,
-  tap,
-} from 'rxjs';
+import { concatMap, defer, interval, map, Subject, takeUntil } from 'rxjs';
 import { fromFetch } from 'rxjs/fetch';
 
 @Component({
@@ -36,41 +22,32 @@ export class AppComponent {
   }
 
   async streamFetch() {
-    const writeStream = new window.WritableStream();
-    const writer = writeStream.getWriter();
+    const stop$: Subject<boolean> = new Subject();
+    let content = '';
 
     fromFetch('http://localhost:3000/download')
       .pipe(
-        map((res) => {
-          console.log('------------------------');
-          console.log('res', res);
-          console.log('------------------------');
-          return (res.body as ReadableStream<Uint8Array>).getReader();
-        }),
+        map((res) => (res.body as ReadableStream<Uint8Array>).getReader()),
         concatMap((reader) => {
-          return defer(() => reader.read()).pipe(
-            takeWhile((chunk) => !chunk.done),
-            map((chunk) => new TextDecoder().decode(chunk.value) + '\n'),
-            delay(2000),
-            repeat()
+          return interval(1000).pipe(
+            concatMap(() =>
+              defer(() => reader.read()).pipe(
+                map((chunk) => {
+                  chunk.done && stop$.next(true);
+                  return chunk.value;
+                })
+              )
+            ),
+            takeUntil(stop$)
           );
-        }),
-        map((data) => {
-          console.log('------------------------');
-          console.log('data', data);
-          console.log('------------------------');
         })
       )
       .subscribe({
         next: (value) => {
-          console.log('------------------------');
-          console.log('value', value);
-          console.log('------------------------');
+          content += new TextDecoder().decode(value);
         },
-        complete: () => {
-          console.log('------------------------');
-          console.log('COMPLETE!!!');
-          console.log('------------------------');
+        complete: async () => {
+          this.appendToCsv(content);
         },
       });
   }
@@ -89,10 +66,11 @@ export class AppComponent {
       });
   }
   appendToCsv(data: string) {
-    const blob = new Blob([data], { type: 'text/csv' });
-    const link = document.createElement('a');
-    link.href = window.URL.createObjectURL(blob);
-    link.download = 'data.csv';
-    link.click();
+    const a = document.createElement('a');
+    a.href = 'data:text/csv,' + data;
+    a.setAttribute('download', 'data.csv');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 }
